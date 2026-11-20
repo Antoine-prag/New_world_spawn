@@ -1,0 +1,181 @@
+package dev.prag.newworldspawn;
+
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.Command;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import dev.prag.newworldspawn.log.NwsLog;
+import net.minecraft.commands.CommandSourceStack;
+
+import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
+
+
+/**
+ * Commandes :
+ * - /spawn : teleporte dans la dimension d'accueil (delai 5 s, annule si interaction).
+ * - /setspawn all|off : (OP) tous les joueurs qui se connectent arrivent dans la dimension spawn.
+ *   Ne change JAMAIS le respawn/lit : uniquement le point d'arrivee a la connexion.
+ * - /randomtp [joueur] : sortie de la dimension spawn vers un point aleatoire de l'overworld.
+ *   /randomtp seul : n'importe quel joueur. /randomtp <joueur> : OP uniquement.
+ */
+@EventBusSubscriber(modid = NewWorldSpawn.MODID)
+public final class NwsCommands
+{
+    private NwsCommands()
+    {
+    }
+
+    private static final net.minecraft.util.RandomSource RANDOM = net.minecraft.util.RandomSource.create();
+
+    @SubscribeEvent
+    public static void onRegisterCommands(final RegisterCommandsEvent event)
+    {
+        final var dispatcher = event.getDispatcher();
+        dispatcher.register(Commands.literal("spawn").executes(NwsCommands::spawnCmd));
+        dispatcher.register(Commands.literal("setspawn")
+            .requires(src -> src.hasPermission(2))
+            .then(Commands.argument("mode", StringArgumentType.word())
+                .suggests((throwContext, builder) ->
+                    builder.suggest("all").suggest("off").buildFuture())
+                .executes(NwsCommands::setSpawnCmd)));
+        dispatcher.register(Commands.literal("randomtp")
+            .executes(NwsCommands::randomTpSelf)
+            .then(Commands.argument("joueur", EntityArgument.player())
+                .requires(src -> src.hasPermission(2))
+                .executes(NwsCommands::randomTpPlayer)));
+        NwsLog.info("Commandes enregistrees : /spawn, /setspawn all|off, /randomtp [joueur]");
+    }
+
+    // ------------------------------------------------------------------ /spawn
+
+    static int spawnCmd(final CommandContext<CommandSourceStack> ctx)
+    {
+        if (!(ctx.getSource().getEntity() instanceof final ServerPlayer p))
+        {
+            ctx.getSource().sendFailure(Component.literal("Commande joueur uniquement."));
+            return 0;
+        }
+        final ServerLevel level = GameEvents.spawnLevel(p.getServer());
+        if (level == null)
+        {
+            p.sendSystemMessage(Component.literal("§cDimension d'accueil indisponible (voir logs/newworldspawn.log)."));
+            return 0;
+        }
+        if (GameEvents.inSpawnDim(p))
+        {
+            p.sendSystemMessage(Component.literal("§7Vous êtes déjà dans la dimension d'accueil."));
+            return 0;
+        }
+        final int delaySec = SpawnConfig.SPAWN_DELAY_SECONDS.get();
+        if (delaySec <= 0)
+        {
+            p.teleportTo(level, 0.5, GameEvents.spawnY(level), 0.5, p.getYRot(), p.getXRot());
+            p.sendSystemMessage(Component.literal("§aBienvenue dans la dimension d'accueil ! §7(/randomtp pour sortir)"));
+        }
+        else
+        {
+            SpawnTeleports.schedule(p, level, 0.5, GameEvents.spawnY(level), 0.5,
+                p.getYRot(), p.getXRot(), delaySec * 20);
+            p.sendSystemMessage(Component.literal("§7Téléportation au spawn dans §e" + delaySec
+                + "s§7 — n'interagissez pas, sinon elle est annulée."));
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ------------------------------------------------------------------ /setspawn all|off
+
+    static int setSpawnCmd(final CommandContext<CommandSourceStack> ctx)
+    {
+        final String mode = StringArgumentType.getString(ctx, "mode").toLowerCase();
+        final SpawnState state = SpawnState.get(ctx.getSource().getServer());
+        switch (mode)
+        {
+            case "all" ->
+            {
+                state.forceSpawnAll = true;
+                state.setDirty();
+                NwsLog.info("/setspawn all : tous les joueurs qui se connectent arrivent dans la dimension spawn.");
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                    "§aOK : tous les joueurs qui se connectent arrivent dans la dimension d'accueil."
+                        + " §7(les lits gardent le respawn de mort)."), true);
+            }
+            case "off" ->
+            {
+                state.forceSpawnAll = false;
+                state.setDirty();
+                NwsLog.info("/setspawn off : retour au spawn vanilla a la connexion.");
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                    "§aOK : spawn à la connexion = vanilla."), true);
+            }
+            default -> ctx.getSource().sendFailure(Component.literal("§cUsage : /setspawn <all|off>"));
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ------------------------------------------------------------------ /randomtp [joueur]
+
+    static int randomTpSelf(final CommandContext<CommandSourceStack> ctx)
+    {
+        if (!(ctx.getSource().getEntity() instanceof final ServerPlayer p))
+        {
+            ctx.getSource().sendFailure(Component.literal("Commande joueur uniquement."));
+            return 0;
+        }
+        randomTp(p);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    static int randomTpPlayer(final CommandContext<CommandSourceStack> ctx)
+    {
+        try
+        {
+            final ServerPlayer target = EntityArgument.getPlayer(ctx, "joueur");
+            randomTp(target);
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                "§a" + target.getName().getString() + " téléporté aléatoirement."), true);
+        }
+        catch (final com.mojang.brigadier.exceptions.CommandSyntaxException e)
+        {
+            ctx.getSource().sendFailure(Component.literal("§cJoueur introuvable."));
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static void randomTp(final ServerPlayer p)
+    {
+        final ServerLevel over = p.getServer().overworld();
+        final int range = SpawnConfig.RANDOM_TP_RANGE.get();
+        BlockPos found = null;
+        for (int attempt = 0; attempt < 25; attempt++)
+        {
+            final int x = Mth.randomBetweenInclusive(RANDOM, -range, range);
+            final int z = Mth.randomBetweenInclusive(RANDOM, -range, range);
+            final int y = over.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+            if (y > over.getSeaLevel() + 1)
+            {
+                found = new BlockPos(x, y, z);
+                break;
+            }
+        }
+        if (found == null)
+        {
+            final int x = Mth.randomBetweenInclusive(RANDOM, -range, range);
+            final int z = Mth.randomBetweenInclusive(RANDOM, -range, range);
+            found = new BlockPos(x, over.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z), z);
+        }
+        final String from = p.level().dimension().location().toString();
+        p.teleportTo(over, found.getX() + 0.5, found.getY() + 1.0, found.getZ() + 0.5, p.getYRot(), p.getXRot());
+        p.sendSystemMessage(Component.literal("§aTéléporté vers §fx " + found.getX() + ", z " + found.getZ() + "§a."));
+        NwsLog.info("/randomtp : {} (depuis {}) -> x{} z{}", p.getName().getString(), from,
+            found.getX(), found.getZ());
+    }
+}
