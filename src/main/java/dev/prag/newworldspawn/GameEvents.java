@@ -77,6 +77,39 @@ public final class GameEvents
         border.setWarningTime(5);
         NewWorldSpawn.LOG.info("Bordure posee : centre (0,0), rayon {} blocs ({} chunks).",
             radiusBlocks, SpawnConfig.BORDER_RADIUS_CHUNKS.get());
+        ensureSpawnPlatform(level);
+    }
+
+    /**
+     * Le monde est 100% aquatique : on construit une plateforme fixe au point d'arrivee (0,0),
+     * sinon les joueurs tombent dans l'eau (lourde) et coulent. Idempotent.
+     */
+    private static void ensureSpawnPlatform(final ServerLevel level)
+    {
+        final int y = level.getSeaLevel(); // premiere couche au-dessus de la surface de l'eau
+        final var center = new net.minecraft.core.BlockPos(0, y, 0);
+        if (level.getBlockState(center).getBlock() == net.minecraft.world.level.block.Blocks.SANDSTONE)
+        {
+            return; // deja construite
+        }
+        final int half = 5; // plateforme 11x11
+        for (int x = -half; x <= half; x++)
+        {
+            for (int z = -half; z <= half; z++)
+            {
+                level.setBlock(new net.minecraft.core.BlockPos(x, y, z),
+                    net.minecraft.world.level.block.Blocks.SANDSTONE.defaultBlockState(), 3);
+                for (int dy = 1; dy <= 2; dy++)
+                {
+                    final var above = new net.minecraft.core.BlockPos(x, y + dy, z);
+                    if (!level.getBlockState(above).isAir())
+                    {
+                        level.setBlock(above, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+                    }
+                }
+            }
+        }
+        NewWorldSpawn.LOG.info("Plateforme de spawn construite en (0,{}) : 11x11 sandstone (monde aquatique).", y);
     }
 
     // ------------------------------------------------------------------ aventure forcee

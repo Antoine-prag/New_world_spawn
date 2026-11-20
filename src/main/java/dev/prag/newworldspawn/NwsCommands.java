@@ -8,7 +8,6 @@ import net.minecraft.commands.CommandSourceStack;
 
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -150,32 +149,50 @@ public final class NwsCommands
         return Command.SINGLE_SUCCESS;
     }
 
+    /**
+     * Teleporte SURFACE GARANTIE : on cherche d'abord de la terre ferme (25 essais),
+     * sinon on pose le joueur a la surface de l'eau (niveau de la mer + 1).
+     * MOTION_BLOCKING (et pas NO_LEAVES) : jamais a l'interieur d'un arbre.
+     */
+    private static int surfaceY(final ServerLevel over, final int x, final int z)
+    {
+        int y = over.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
+        if (y <= over.getSeaLevel())
+        {
+            y = over.getSeaLevel() + 1; // ocean : on reste a la surface de l'eau
+        }
+        return Math.max(y, over.getMinBuildHeight() + 1);
+    }
+
     private static void randomTp(final ServerPlayer p)
     {
         final ServerLevel over = p.getServer().overworld();
         final int range = SpawnConfig.RANDOM_TP_RANGE.get();
-        BlockPos found = null;
+        int x = 0, z = 0, y = 0;
+        boolean land = false;
         for (int attempt = 0; attempt < 25; attempt++)
         {
-            final int x = Mth.randomBetweenInclusive(RANDOM, -range, range);
-            final int z = Mth.randomBetweenInclusive(RANDOM, -range, range);
-            final int y = over.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
-            if (y > over.getSeaLevel() + 1)
+            x = Mth.randomBetweenInclusive(RANDOM, -range, range);
+            z = Mth.randomBetweenInclusive(RANDOM, -range, range);
+            y = surfaceY(over, x, z);
+            if (y > over.getSeaLevel() + 2)
             {
-                found = new BlockPos(x, y, z);
+                land = true; // terre ferme (au-dessus de la vague/ice)
                 break;
             }
         }
-        if (found == null)
+        if (!land)
         {
-            final int x = Mth.randomBetweenInclusive(RANDOM, -range, range);
-            final int z = Mth.randomBetweenInclusive(RANDOM, -range, range);
-            found = new BlockPos(x, over.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z), z);
+            x = Mth.randomBetweenInclusive(RANDOM, -range, range);
+            z = Mth.randomBetweenInclusive(RANDOM, -range, range);
+            y = surfaceY(over, x, z);
         }
         final String from = p.level().dimension().location().toString();
-        p.teleportTo(over, found.getX() + 0.5, found.getY() + 1.0, found.getZ() + 0.5, p.getYRot(), p.getXRot());
-        p.sendSystemMessage(Component.literal("§aTéléporté vers §fx " + found.getX() + ", z " + found.getZ() + "§a."));
-        NwsLog.info("/randomtp : {} (depuis {}) -> x{} z{}", p.getName().getString(), from,
-            found.getX(), found.getZ());
+        p.teleportTo(over, x + 0.5, y, z + 0.5, p.getYRot(), p.getXRot());
+        final String ou = land ? "terre ferme" : "surface de l'eau";
+        p.sendSystemMessage(Component.literal("§aTéléporté vers §fx " + x + ", z " + z
+            + " §7(" + ou + ")."));
+        NwsLog.info("/randomtp : {} (depuis {}) -> x{} z{} y{} ({})", p.getName().getString(), from,
+            x, z, y, ou);
     }
 }

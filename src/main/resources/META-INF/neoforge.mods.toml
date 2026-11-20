@@ -4,7 +4,7 @@ license="MIT"
 
 [[mods]]
 modId="newworldspawn"
-version="1.0.0"
+version="1.0.1"
 displayName="New World Spawn"
 authors="Antoine-prag"
 description="Dimension d'accueil : petite ile aquatique (rayon 20 chunks), gamemode aventure force, /spawn avec delai, /setspawn all pour accueillir les nouveaux joueurs, /randomtp pour en sortir. Pas de PvP, eau quasi irrespirable/nage impossible dans cette dimension uniquement."
