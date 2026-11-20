@@ -288,6 +288,11 @@ public final class GameEvents
     @SubscribeEvent
     public static void onDamage(final LivingIncomingDamageEvent event)
     {
+        // toute TP /spawn en attente est annulee par des degats (toute source)
+        if (event.getEntity() instanceof final ServerPlayer victim)
+        {
+            SpawnTeleports.cancelIfPending(victim, "dégâts subis");
+        }
         if (!SpawnConfig.NO_PVP.get())
         {
             return;

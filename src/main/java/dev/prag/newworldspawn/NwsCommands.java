@@ -85,7 +85,7 @@ public final class NwsCommands
             SpawnTeleports.schedule(p, level, 0.5, GameEvents.spawnY(level), 0.5,
                 p.getYRot(), p.getXRot(), delaySec * 20);
             p.sendSystemMessage(Component.literal("§7Téléportation au spawn dans §e" + delaySec
-                + "s§7 — n'interagissez pas, sinon elle est annulée."));
+                + "s§7 — n'interagissez pas, ne bougez pas et ne subissez pas de dégâts, sinon elle est annulée."));
         }
         return Command.SINGLE_SUCCESS;
     }
