@@ -52,10 +52,52 @@ public final class GameEvents
         return p.level().dimension() == SPAWN_DIM;
     }
 
-    /** Y max au point de spawn (0,0). */
+    /**
+     * Y de pied du joueur sur la plateforme (0,0) — DETERMINISTE :
+     * le niveau de l'eau est mesure en (10,10) HORS de la plateforme (stuite: stable d'un redemarrage a l'autre),
+     * la plateforme est TOUJOURS posee a ce niveau (les anciens empilements +1/redemarrage sont purges).
+     */
     public static double spawnY(final ServerLevel level)
     {
-        return level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, 0, 0) + 1.0;
+        return ensureSpawnPlatform(level) + 1.0;
+    }
+
+    /** Construit/verifie la plateforme ; @return le Y de sa surface marchable. */
+    private static int ensureSpawnPlatform(final ServerLevel level)
+    {
+        // generation COMPLETE du chunk central avant lecture heightmap
+        level.getChunk(0, 0, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
+        final int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, 10, 10);
+        final int half = 5; // plateforme 11x11
+        boolean dirty = false;
+        for (int x = -half; x <= half; x++)
+        {
+            for (int z = -half; z <= half; z++)
+            {
+                // purge des anciens empilements au-dessus de la plateforme cible
+                for (int dy = 1; dy <= 12; dy++)
+                {
+                    final var above = new net.minecraft.core.BlockPos(x, y + dy, z);
+                    if (!level.getBlockState(above).isAir())
+                    {
+                        level.setBlock(above, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+                        dirty = true;
+                    }
+                }
+                final var plate = new net.minecraft.core.BlockPos(x, y, z);
+                if (level.getBlockState(plate).getBlock() != net.minecraft.world.level.block.Blocks.SANDSTONE)
+                {
+                    level.setBlock(plate, net.minecraft.world.level.block.Blocks.SANDSTONE.defaultBlockState(), 3);
+                    dirty = true;
+                }
+            }
+        }
+        if (dirty)
+        {
+            NewWorldSpawn.LOG.info("Plateforme de spawn (re)construite en (0,{}) : 11x11 sandstone, anciens empilements purges.", y);
+            auditColumn(level, 10, 10);
+        }
+        return y;
     }
 
     // ------------------------------------------------------------------ demarrage : bordure
@@ -78,43 +120,6 @@ public final class GameEvents
         NewWorldSpawn.LOG.info("Bordure posee : centre (0,0), rayon {} blocs ({} chunks).",
             radiusBlocks, SpawnConfig.BORDER_RADIUS_CHUNKS.get());
         ensureSpawnPlatform(level);
-    }
-
-    /**
-     * Le monde est 100% aquatique (preset plat : fond/ardoise/roche/dirt/gravel + 90 d'eau) :
-     * on construit une plateforme fixe au point d'arrivee (0,0), sinon les joueurs tombent
-     * dans l'eau (lourde) et coulent. Idempotent. Y' = premier Y libre au-dessus du plus haut
-     * bloc (l'eau compte), oui comme ca le preset reste aux commandes.
-     */
-    private static void ensureSpawnPlatform(final ServerLevel level)
-    {
-        // generation COMPLETE du chunk central avant lecture heightmap
-        level.getChunk(0, 0, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
-        final int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, 0, 0);
-        final var center = new net.minecraft.core.BlockPos(0, y, 0);
-        if (level.getBlockState(center).getBlock() == net.minecraft.world.level.block.Blocks.SANDSTONE)
-        {
-            return; // deja construite
-        }
-        final int half = 5; // plateforme 11x11
-        for (int x = -half; x <= half; x++)
-        {
-            for (int z = -half; z <= half; z++)
-            {
-                level.setBlock(new net.minecraft.core.BlockPos(x, y, z),
-                    net.minecraft.world.level.block.Blocks.SANDSTONE.defaultBlockState(), 3);
-                for (int dy = 1; dy <= 2; dy++)
-                {
-                    final var above = new net.minecraft.core.BlockPos(x, y + dy, z);
-                    if (!level.getBlockState(above).isAir())
-                    {
-                        level.setBlock(above, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
-                    }
-                }
-            }
-        }
-        NewWorldSpawn.LOG.info("Plateforme de spawn construite en (0,{}) : 11x11 sandstone (monde aquatique).", y);
-        auditColumn(level, 10, 10);
     }
 
     /** Audit demarrage : une colonne de blocs dans logs/newworldspawn.log pour valider le preset sans client. */
@@ -143,6 +148,7 @@ public final class GameEvents
     {
         // TP /spawn differee : a CHAQUE tick
         SpawnTeleports.tick(event.getServer());
+        TeleportGuard.tick(event.getServer());
         if (!SpawnConfig.FORCE_ADVENTURE.get())
         {
             return;
@@ -250,6 +256,7 @@ public final class GameEvents
         if (event.getEntity() instanceof final ServerPlayer p)
         {
             SpawnTeleports.cancelServer(p);
+            TeleportGuard.cancel(p.getUUID());
             PREVIOUS_MODE.remove(p.getUUID());
         }
     }
@@ -277,6 +284,9 @@ public final class GameEvents
             return;
         }
         p.teleportTo(level, 0.5, spawnY(level), 0.5, p.getYRot(), p.getXRot());
+        p.fallDistance = 0.0f;
+        p.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+        TeleportGuard.guard(p, level, 0.5, spawnY(level), 0.5, spawnY(level) - 0.5);
         p.sendSystemMessage(Component.literal(
             "§aBienvenue ! Vous arrivez dans la dimension d'accueil. Tapez §f/randomtp§a pour rejoindre le monde."));
         NewWorldSpawn.LOG.info("Accueil : {} teleporte dans la dimension spawn (setspawn all)",

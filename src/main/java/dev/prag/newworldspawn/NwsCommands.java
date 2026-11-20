@@ -78,6 +78,9 @@ public final class NwsCommands
         if (delaySec <= 0)
         {
             p.teleportTo(level, 0.5, GameEvents.spawnY(level), 0.5, p.getYRot(), p.getXRot());
+            p.fallDistance = 0.0f;
+            p.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+            TeleportGuard.guard(p, level, 0.5, GameEvents.spawnY(level), 0.5, GameEvents.spawnY(level) - 0.5);
             p.sendSystemMessage(Component.literal("§aBienvenue dans la dimension d'accueil ! §7(/randomtp pour sortir)"));
         }
         else
@@ -196,6 +199,9 @@ public final class NwsCommands
         }
         final String from = p.level().dimension().location().toString();
         p.teleportTo(over, x + 0.5, y, z + 0.5, p.getYRot(), p.getXRot());
+        p.fallDistance = 0.0f;
+        p.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+        TeleportGuard.guard(p, over, x + 0.5, y, z + 0.5, y - 0.5);
         final String ou = land ? "terre ferme" : "surface de l'eau";
         p.sendSystemMessage(Component.literal("§aTéléporté vers §fx " + x + ", z " + z
             + " §7(" + ou + ")."));

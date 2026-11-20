@@ -103,7 +103,14 @@ public final class SpawnTeleports
                 continue;
             }
             PENDING.remove(e.getKey());
+            // generation COMPLETE du chunk destination AVANT teleportation
+            pd.level().getChunk(((int) pd.x()) >> 4, ((int) pd.z()) >> 4,
+                net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
             p.teleportTo(pd.level(), pd.x(), pd.y(), pd.z(), pd.yaw(), pd.pitch());
+            p.fallDistance = 0.0f;
+            p.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+            // garde anti-chute : si le client n'a pas encore le chunk, on le rattrape
+            TeleportGuard.guard(p, pd.level(), pd.x(), pd.y(), pd.z(), pd.y() - 0.5);
             p.sendSystemMessage(Component.literal("§aBienvenue dans la dimension d'accueil ! §7(/randomtp pour sortir)"));
             dev.prag.newworldspawn.log.NwsLog.info("TP /spawn executee : {}", p.getName().getString());
         }
