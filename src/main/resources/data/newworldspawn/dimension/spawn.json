@@ -1,11 +1,18 @@
 {
   "type": "newworldspawn:spawn",
   "generator": {
-    "type": "minecraft:noise",
-    "settings": "newworldspawn:ocean_world",
-    "biome_source": {
-      "type": "minecraft:fixed",
-      "biome": "minecraft:ocean"
+    "type": "minecraft:flat",
+    "settings": {
+      "layers": [
+        { "block": "minecraft:bedrock", "height": 1 },
+        { "block": "minecraft:deepslate", "height": 64 },
+        { "block": "minecraft:stone", "height": 5 },
+        { "block": "minecraft:dirt", "height": 5 },
+        { "block": "minecraft:gravel", "height": 5 },
+        { "block": "minecraft:water", "height": 90 }
+      ],
+      "biome": "minecraft:the_void",
+      "features": false
     }
   }
 }

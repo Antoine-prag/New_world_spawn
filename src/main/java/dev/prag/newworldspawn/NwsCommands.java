@@ -150,18 +150,25 @@ public final class NwsCommands
     }
 
     /**
-     * Teleporte SURFACE GARANTIE : on cherche d'abord de la terre ferme (25 essais),
-     * sinon on pose le joueur a la surface de l'eau (niveau de la mer + 1).
-     * MOTION_BLOCKING (et pas NO_LEAVES) : jamais a l'interieur d'un arbre.
+     * Surface GARANTIE : on force la generation COMPLETE du chunk (ChunkStatus.FULL) avant de lire
+     * la heightmap — getHeight sur un chunk incomplet renvoie des valeurs fausses, ce qui posait
+     * les joueurs a y~64 A L'INTERIEUR des montagnes. Occean : surface de l'eau.
      */
     private static int surfaceY(final ServerLevel over, final int x, final int z)
     {
+        over.getChunk(x >> 4, z >> 4, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
         int y = over.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
-        if (y <= over.getSeaLevel())
+        final int min = over.getSeaLevel() + 1;      // ocean : jamais sous la surface de l'eau
+        final int max = over.getMaxBuildHeight() - 2; // jamais au-dessus du plafond
+        if (y < min)
         {
-            y = over.getSeaLevel() + 1; // ocean : on reste a la surface de l'eau
+            y = min;
         }
-        return Math.max(y, over.getMinBuildHeight() + 1);
+        if (y > max)
+        {
+            y = max;
+        }
+        return y;
     }
 
     private static void randomTp(final ServerPlayer p)

@@ -81,12 +81,16 @@ public final class GameEvents
     }
 
     /**
-     * Le monde est 100% aquatique : on construit une plateforme fixe au point d'arrivee (0,0),
-     * sinon les joueurs tombent dans l'eau (lourde) et coulent. Idempotent.
+     * Le monde est 100% aquatique (preset plat : fond/ardoise/roche/dirt/gravel + 90 d'eau) :
+     * on construit une plateforme fixe au point d'arrivee (0,0), sinon les joueurs tombent
+     * dans l'eau (lourde) et coulent. Idempotent. Y' = premier Y libre au-dessus du plus haut
+     * bloc (l'eau compte), oui comme ca le preset reste aux commandes.
      */
     private static void ensureSpawnPlatform(final ServerLevel level)
     {
-        final int y = level.getSeaLevel(); // premiere couche au-dessus de la surface de l'eau
+        // generation COMPLETE du chunk central avant lecture heightmap
+        level.getChunk(0, 0, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
+        final int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, 0, 0);
         final var center = new net.minecraft.core.BlockPos(0, y, 0);
         if (level.getBlockState(center).getBlock() == net.minecraft.world.level.block.Blocks.SANDSTONE)
         {
@@ -110,6 +114,26 @@ public final class GameEvents
             }
         }
         NewWorldSpawn.LOG.info("Plateforme de spawn construite en (0,{}) : 11x11 sandstone (monde aquatique).", y);
+        auditColumn(level, 10, 10);
+    }
+
+    /** Audit demarrage : une colonne de blocs dans logs/newworldspawn.log pour valider le preset sans client. */
+    private static void auditColumn(final ServerLevel level, final int x, final int z)
+    {
+        final int minY = level.getMinBuildHeight();
+        final int top = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z);
+        final StringBuilder sb = new StringBuilder("Blocs (").append(x).append(',').append(z).append(") : ");
+        final int[] ys = { minY, minY + 1, minY + 65, minY + 70, minY + 75, top - 1, top, top + 1 };
+        for (int i = 0; i < ys.length; i++)
+        {
+            final var st = level.getBlockState(new net.minecraft.core.BlockPos(x, ys[i], z));
+            sb.append("y").append(ys[i]).append('=').append(st.getBlock().getName().getString());
+            if (i < ys.length - 1)
+            {
+                sb.append(", ");
+            }
+        }
+        NewWorldSpawn.LOG.info("AUDIT {}", sb);
     }
 
     // ------------------------------------------------------------------ aventure forcee
