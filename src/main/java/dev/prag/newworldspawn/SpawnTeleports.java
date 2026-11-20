@@ -22,7 +22,7 @@ public final class SpawnTeleports
     }
 
     private record Pending(ServerLevel level, double x, double y, double z, float yaw, float pitch,
-        double ox, double oy, double oz, long dueTick)
+        double ox, double oy, double oz, long dueTick, boolean moveCancel)
     {
     }
 
@@ -36,8 +36,22 @@ public final class SpawnTeleports
     {
         PENDING.put(player.getUUID(), new Pending(level, x, y, z, yaw, pitch,
             player.getX(), player.getY(), player.getZ(),
-            player.getServer().getTickCount() + delayTicks));
+            player.getServer().getTickCount() + delayTicks, true));
         dev.prag.newworldspawn.log.NwsLog.info("TP /spawn planifiee pour {} dans {} ticks", player.getName().getString(), delayTicks);
+    }
+
+    /**
+     * TP differee du LOGIN (/setspawn all) : court delai, SANS annulation de deplacement
+     * (le client envoie encore des packets de position pendant l'initialisation) ni de
+     * compte a rebours. Passe par le meme chemin sur (chunk prep + garde anti-chute).
+     */
+    public static void scheduleLogin(final ServerPlayer player, final ServerLevel level)
+    {
+        final double x = 0.5, z = 0.5;
+        final double y = GameEvents.spawnY(level);
+        PENDING.put(player.getUUID(), new Pending(level, x, y, z, player.getYRot(), player.getXRot(),
+            x, y, z, player.getServer().getTickCount() + 10, false));
+        dev.prag.newworldspawn.log.NwsLog.info("TP de login planifiee pour {} (setspawn all, 10 ticks)", player.getName().getString());
     }
 
     /** @return true si une TP en attente a ete annulee (interaction). */
@@ -73,34 +87,37 @@ public final class SpawnTeleports
             {
                 continue;
             }
-            // DEPLACEMENT = annulation (position au moment du /spawn comparee a la position actuelle)
-            final double dx = p.getX() - pd.ox();
-            final double dy = p.getY() - pd.oy();
-            final double dz = p.getZ() - pd.oz();
-            if (dx * dx + dy * dy + dz * dz > MOVE_CANCEL_SQ)
-            {
-                PENDING.remove(e.getKey());
-                p.sendSystemMessage(Component.literal("§cTéléportation annulée : vous vous êtes déplacé."));
-                dev.prag.newworldspawn.log.NwsLog.info("TP /spawn annulee pour {} (deplacement detecte)",
-                    p.getName().getString());
-                continue;
-            }
-            if (!p.isAlive())
-            {
-                PENDING.remove(e.getKey());
-                p.sendSystemMessage(Component.literal("§cTéléportation annulée : vous êtes mort."));
-                dev.prag.newworldspawn.log.NwsLog.info("TP /spawn annulee pour {} (mort)", p.getName().getString());
-                continue;
-            }
             final long remaining = pd.dueTick() - now;
             if (remaining > 0)
             {
-                if (remaining % 20L == 0L)
+                // compte a rebours annonce uniquement pour les TP voluntaires (/spawn)
+                if (pd.moveCancel() && remaining % 20L == 0L)
                 {
                     p.sendSystemMessage(Component.literal("§7Téléportation au spawn dans §e"
                         + (remaining / 20L) + "s§7..."));
                 }
                 continue;
+            }
+            if (pd.moveCancel())
+            {
+                final double dx = p.getX() - pd.ox();
+                final double dy = p.getY() - pd.oy();
+                final double dz = p.getZ() - pd.oz();
+                if (dx * dx + dy * dy + dz * dz > MOVE_CANCEL_SQ)
+                {
+                    PENDING.remove(e.getKey());
+                    p.sendSystemMessage(Component.literal("§cTéléportation annulée : vous vous êtes déplacé."));
+                    dev.prag.newworldspawn.log.NwsLog.info("TP /spawn annulee pour {} (deplacement detecte)",
+                        p.getName().getString());
+                    continue;
+                }
+                if (!p.isAlive())
+                {
+                    PENDING.remove(e.getKey());
+                    p.sendSystemMessage(Component.literal("§cTéléportation annulée : vous êtes mort."));
+                    dev.prag.newworldspawn.log.NwsLog.info("TP /spawn annulee pour {} (mort)", p.getName().getString());
+                    continue;
+                }
             }
             PENDING.remove(e.getKey());
             // generation COMPLETE du chunk destination AVANT teleportation

@@ -283,13 +283,11 @@ public final class GameEvents
         {
             return;
         }
-        p.teleportTo(level, 0.5, spawnY(level), 0.5, p.getYRot(), p.getXRot());
-        p.fallDistance = 0.0f;
-        p.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
-        TeleportGuard.guard(p, level, 0.5, spawnY(level), 0.5, spawnY(level) - 0.5);
-        p.sendSystemMessage(Component.literal(
-            "§aBienvenue ! Vous arrivez dans la dimension d'accueil. Tapez §f/randomtp§a pour rejoindre le monde."));
-        NewWorldSpawn.LOG.info("Accueil : {} teleporte dans la dimension spawn (setspawn all)",
+        // TP DIFFEREE (10 ticks) : teleporter directement DANS PlayerLoggedInEvent ne colle pas
+        // fiablement (init client + ImmPtl). On passe par le meme chemin sur que /spawn
+        // (generation du chunk destination + garde anti-chute), sans compte a rebours.
+        SpawnTeleports.scheduleLogin(p, level);
+        NewWorldSpawn.LOG.info("Accueil : {} sera teleporte dans la dimension spawn (setspawn all)",
             p.getName().getString());
     }
 

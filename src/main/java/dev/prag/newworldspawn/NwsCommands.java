@@ -104,7 +104,7 @@ public final class NwsCommands
             case "all" ->
             {
                 state.forceSpawnAll = true;
-                state.setDirty();
+                SpawnState.set(ctx.getSource().getServer(), true); // ecrit IMMEDIATEMENT sur disque
                 NwsLog.info("/setspawn all : tous les joueurs qui se connectent arrivent dans la dimension spawn.");
                 ctx.getSource().sendSuccess(() -> Component.literal(
                     "§aOK : tous les joueurs qui se connectent arrivent dans la dimension d'accueil."
@@ -113,7 +113,7 @@ public final class NwsCommands
             case "off" ->
             {
                 state.forceSpawnAll = false;
-                state.setDirty();
+                SpawnState.set(ctx.getSource().getServer(), false); // ecrit IMMEDIATEMENT sur disque
                 NwsLog.info("/setspawn off : retour au spawn vanilla a la connexion.");
                 ctx.getSource().sendSuccess(() -> Component.literal(
                     "§aOK : spawn à la connexion = vanilla."), true);
