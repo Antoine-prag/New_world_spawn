@@ -128,7 +128,7 @@ public final class SpawnTeleports
             p.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
             // garde anti-chute : si le client n'a pas encore le chunk, on le rattrape
             TeleportGuard.guard(p, pd.level(), pd.x(), pd.y(), pd.z(), pd.y() - 0.5);
-            p.sendSystemMessage(Component.literal("§aBienvenue dans la dimension d'accueil ! §7(/randomtp pour sortir)"));
+            p.sendSystemMessage(Component.literal("§aBienvenue dans la dimension d'accueil !"));
             dev.prag.newworldspawn.log.NwsLog.info("TP /spawn executee : {}", p.getName().getString());
         }
     }

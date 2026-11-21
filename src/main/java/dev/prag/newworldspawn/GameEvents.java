@@ -46,6 +46,12 @@ public final class GameEvents
     /** dernier message "verrou spawn" envoye au joueur (throttle 5 s). */
     private static final Map<UUID, Long> LAST_DENY_MSG = new HashMap<>();
 
+    /** Y de spawn en (0,0), calcule UNE FOIS puis mis en cache (aucune regeneration a chaque /spawn). */
+    private static volatile double cachedSpawnY = -1.0;
+
+    /** File de pre-generation des chunks (remplie au boot, videe ? chunksParTick). */
+    private static final java.util.ArrayDeque<Long> PRELOAD_QUEUE = new java.util.ArrayDeque<>();
+
     public static ServerLevel spawnLevel(final MinecraftServer server)
     {
         return server.getLevel(SPAWN_DIM);
@@ -57,14 +63,21 @@ public final class GameEvents
     }
 
     /**
-     * Y de pied du joueur en (0,0) — LECTURE SEULE :
+     * Y de pied du joueur en (0,0) — LECTURE SEULE + CACHE :
+     * le chunk central n'est genere qu'UNE fois (sinon chaque /spawn regenerait des chunks
+     * FULL de maniere synchrone = gros lag), puis mis en cache jusqu'au prochain redemarrage.
      * AUCUNE construction/purge de blocs (le spawn est construit a la main, on n'y touche pas).
-     * Generation COMPLETE du chunk central avant lecture heightmap (sinon valeurs fausses).
      */
     public static double spawnY(final ServerLevel level)
     {
-        level.getChunk(0, 0, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
-        return level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, 0, 0) + 1.0;
+        double y = cachedSpawnY;
+        if (y < 0.0)
+        {
+            level.getChunk(0, 0, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
+            y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, 0, 0) + 1.0;
+            cachedSpawnY = y;
+        }
+        return y;
     }
 
     // ------------------------------------------------------------------ demarrage : bordure
@@ -86,6 +99,62 @@ public final class GameEvents
         border.setWarningTime(5);
         NewWorldSpawn.LOG.info("Bordure posee : centre (0,0), rayon {} blocs ({} chunks).",
             radiusBlocks, SpawnConfig.BORDER_RADIUS_CHUNKS.get());
+
+        // Pre-generation + CHUNK-MAINTENANCE (force load) : la zone centrale de la dimension
+        // reste chargee en permanence -> /spawn et les logins ne regenerent plus rien
+        // (plus de lag ni de chute dans des chunks vides). On etale la generation sur
+        // plusieurs ticks (preloadChunksPerTick) pour ne pas bloquer le boot.
+        loadSpawnArea(event.getServer(), level);
+    }
+
+    private static void loadSpawnArea(final MinecraftServer server, final ServerLevel level)
+    {
+        final int r = SpawnConfig.PRELOAD_RADIUS_CHUNKS.get();
+        if (r <= 0)
+        {
+            NewWorldSpawn.LOG.info("Pre-generation desactivee (preloadRadiusChunks = 0).");
+            return;
+        }
+        PRELOAD_QUEUE.clear();
+        // tri par distance croissante : le centre (destination des TP) est pret le premier
+        final java.util.List<long[]> coords = new java.util.ArrayList<>();
+        for (int cx = -r; cx <= r; cx++)
+        {
+            for (int cz = -r; cz <= r; cz++)
+            {
+                coords.add(new long[] { cx, cz, (long) cx * cx + (long) cz * cz });
+            }
+        }
+        coords.sort(java.util.Comparator.comparingLong(a -> a[2]));
+        for (final long[] c : coords)
+        {
+            level.setChunkForced((int) c[0], (int) c[1], true); // survit aux restarts (level.dat)
+            PRELOAD_QUEUE.add(net.minecraft.world.level.ChunkPos.asLong((int) c[0], (int) c[1]));
+        }
+        NewWorldSpawn.LOG.info("Pre-generation planifiee : {} chunks ({}/{}/tick) + force-load autour de (0,0).",
+            PRELOAD_QUEUE.size(), SpawnConfig.PRELOAD_RADIUS_CHUNKS.get(), SpawnConfig.PRELOAD_CHUNKS_PER_TICK.get());
+    }
+
+    /** Vide la file de pre-generation, ? chunks par tick (jamais synchrone d'un coup). */
+    private static void tickPreload(final MinecraftServer server, final ServerLevel level)
+    {
+        if (PRELOAD_QUEUE.isEmpty())
+        {
+            return;
+        }
+        final int perTick = Math.max(1, SpawnConfig.PRELOAD_CHUNKS_PER_TICK.get());
+        for (int i = 0; i < perTick && !PRELOAD_QUEUE.isEmpty(); i++)
+        {
+            final long pos = PRELOAD_QUEUE.poll();
+            final int cx = net.minecraft.world.level.ChunkPos.getX(pos);
+            final int cz = net.minecraft.world.level.ChunkPos.getZ(pos);
+            level.getChunk(cx, cz, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
+        }
+        if (PRELOAD_QUEUE.isEmpty())
+        {
+            NewWorldSpawn.LOG.info("Pre-generation termine : zone {} chunks chargee (dim {}).",
+                SpawnConfig.PRELOAD_RADIUS_CHUNKS.get(), SPAWN_DIM.location());
+        }
     }
 
     // ------------------------------------------------------------------ aventure forcee
@@ -96,6 +165,12 @@ public final class GameEvents
         // TP /spawn differee : a CHAQUE tick
         SpawnTeleports.tick(event.getServer());
         TeleportGuard.tick(event.getServer());
+        // pre-generation etalee de la dimension spawn
+        final ServerLevel preLevel = spawnLevel(event.getServer());
+        if (preLevel != null)
+        {
+            tickPreload(event.getServer(), preLevel);
+        }
         if (!SpawnConfig.FORCE_ADVENTURE.get())
         {
             return;

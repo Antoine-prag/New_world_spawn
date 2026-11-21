@@ -19,6 +19,8 @@ public final class SpawnConfig
     public static final ModConfigSpec.DoubleValue WATER_TRAVERSAL_RATE;
     public static final ModConfigSpec.IntValue RANDOM_TP_RANGE;
     public static final ModConfigSpec.BooleanValue SPAWN_ON_JOIN;
+    public static final ModConfigSpec.IntValue PRELOAD_RADIUS_CHUNKS;
+    public static final ModConfigSpec.IntValue PRELOAD_CHUNKS_PER_TICK;
 
     public static final ModConfigSpec SPEC;
 
@@ -55,6 +57,16 @@ public final class SpawnConfig
         WATER_TRAVERSAL_RATE = BUILDER
             .comment("Multiplicateur de deplacement horizontal dans l'eau (0.1 = tres lourd).")
             .defineInRange("waterTraversalRate", 0.1, 0.0, 1.0);
+        BUILDER.pop();
+
+        BUILDER.push("Preload");
+        PRELOAD_RADIUS_CHUNKS = BUILDER
+            .comment("Rayon (en chunks) pre-genere + force-load en permanence autour de (0,0) dans la dimension"
+                + " spawn (anti-lag : /spawn et les logins ne generent plus de chunks). 0 = desactive.")
+            .defineInRange("preloadRadiusChunks", 12, 0, 260);
+        PRELOAD_CHUNKS_PER_TICK = BUILDER
+            .comment("Chunks generes par tick pendant la pre-generation au demarrage (monte progressivement, sans bloquer).")
+            .defineInRange("preloadChunksPerTick", 4, 1, 200);
         BUILDER.pop();
 
         BUILDER.push("RandomTP");
