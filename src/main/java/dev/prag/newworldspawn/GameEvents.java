@@ -43,6 +43,9 @@ public final class GameEvents
     /** gamemode sauvegarde avant l'entree dans la dimension (restaure a la sortie). */
     private static final Map<UUID, GameType> PREVIOUS_MODE = new HashMap<>();
 
+    /** dernier message "verrou spawn" envoye au joueur (throttle 5 s). */
+    private static final Map<UUID, Long> LAST_DENY_MSG = new HashMap<>();
+
     public static ServerLevel spawnLevel(final MinecraftServer server)
     {
         return server.getLevel(SPAWN_DIM);
@@ -54,51 +57,14 @@ public final class GameEvents
     }
 
     /**
-     * Y de pied du joueur sur la plateforme (0,0) — DETERMINISTE :
-     * le niveau de l'eau est mesure en (10,10) HORS de la plateforme (stuite: stable d'un redemarrage a l'autre),
-     * la plateforme est TOUJOURS posee a ce niveau (les anciens empilements +1/redemarrage sont purges).
+     * Y de pied du joueur en (0,0) — LECTURE SEULE :
+     * AUCUNE construction/purge de blocs (le spawn est construit a la main, on n'y touche pas).
+     * Generation COMPLETE du chunk central avant lecture heightmap (sinon valeurs fausses).
      */
     public static double spawnY(final ServerLevel level)
     {
-        return ensureSpawnPlatform(level) + 1.0;
-    }
-
-    /** Construit/verifie la plateforme ; @return le Y de sa surface marchable. */
-    private static int ensureSpawnPlatform(final ServerLevel level)
-    {
-        // generation COMPLETE du chunk central avant lecture heightmap
         level.getChunk(0, 0, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
-        final int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, 10, 10);
-        final int half = 5; // plateforme 11x11
-        boolean dirty = false;
-        for (int x = -half; x <= half; x++)
-        {
-            for (int z = -half; z <= half; z++)
-            {
-                // purge des anciens empilements au-dessus de la plateforme cible
-                for (int dy = 1; dy <= 12; dy++)
-                {
-                    final var above = new net.minecraft.core.BlockPos(x, y + dy, z);
-                    if (!level.getBlockState(above).isAir())
-                    {
-                        level.setBlock(above, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
-                        dirty = true;
-                    }
-                }
-                final var plate = new net.minecraft.core.BlockPos(x, y, z);
-                if (level.getBlockState(plate).getBlock() != net.minecraft.world.level.block.Blocks.SANDSTONE)
-                {
-                    level.setBlock(plate, net.minecraft.world.level.block.Blocks.SANDSTONE.defaultBlockState(), 3);
-                    dirty = true;
-                }
-            }
-        }
-        if (dirty)
-        {
-            NewWorldSpawn.LOG.info("Plateforme de spawn (re)construite en (0,{}) : 11x11 sandstone, anciens empilements purges.", y);
-            auditColumn(level, 10, 10);
-        }
-        return y;
+        return level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, 0, 0) + 1.0;
     }
 
     // ------------------------------------------------------------------ demarrage : bordure
@@ -120,26 +86,6 @@ public final class GameEvents
         border.setWarningTime(5);
         NewWorldSpawn.LOG.info("Bordure posee : centre (0,0), rayon {} blocs ({} chunks).",
             radiusBlocks, SpawnConfig.BORDER_RADIUS_CHUNKS.get());
-        ensureSpawnPlatform(level);
-    }
-
-    /** Audit demarrage : une colonne de blocs dans logs/newworldspawn.log pour valider le preset sans client. */
-    private static void auditColumn(final ServerLevel level, final int x, final int z)
-    {
-        final int minY = level.getMinBuildHeight();
-        final int top = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z);
-        final StringBuilder sb = new StringBuilder("Blocs (").append(x).append(',').append(z).append(") : ");
-        final int[] ys = { minY, minY + 1, minY + 65, minY + 70, minY + 75, top - 1, top, top + 1 };
-        for (int i = 0; i < ys.length; i++)
-        {
-            final var st = level.getBlockState(new net.minecraft.core.BlockPos(x, ys[i], z));
-            sb.append("y").append(ys[i]).append('=').append(st.getBlock().getName().getString());
-            if (i < ys.length - 1)
-            {
-                sb.append(", ");
-            }
-        }
-        NewWorldSpawn.LOG.info("AUDIT {}", sb);
     }
 
     // ------------------------------------------------------------------ aventure forcee
@@ -219,7 +165,14 @@ public final class GameEvents
     private static void deny(final net.neoforged.bus.api.ICancellableEvent event, final ServerPlayer p, final String what)
     {
         event.setCanceled(true);
-        p.sendSystemMessage(Component.literal("§7Ici, vous ne pouvez qu'interagir avec les PNJ."));
+        // message limite : 1 toutes les 5 s par joueur (l'action reste TOUJOURS annulee)
+        final long now = System.currentTimeMillis();
+        final Long last = LAST_DENY_MSG.get(p.getUUID());
+        if (last == null || now - last >= 5000L)
+        {
+            LAST_DENY_MSG.put(p.getUUID(), now);
+            p.sendSystemMessage(Component.literal("§7Ici, vous ne pouvez qu'interagir avec les PNJ."));
+        }
         NewWorldSpawn.LOG.info("Verrou spawn : {} bloque ({}, dim {})", p.getName().getString(), what,
             p.level().dimension().location());
     }
@@ -315,6 +268,7 @@ public final class GameEvents
             SpawnTeleports.cancelServer(p);
             TeleportGuard.cancel(p.getUUID());
             PREVIOUS_MODE.remove(p.getUUID());
+            LAST_DENY_MSG.remove(p.getUUID());
         }
     }
 

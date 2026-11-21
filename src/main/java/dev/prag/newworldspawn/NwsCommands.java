@@ -23,8 +23,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
  * - /spawn : teleporte dans la dimension d'accueil (delai 5 s, annule si interaction).
  * - /setspawn all|off : (OP) tous les joueurs qui se connectent arrivent dans la dimension spawn.
  *   Ne change JAMAIS le respawn/lit : uniquement le point d'arrivee a la connexion.
- * - /randomtp [joueur] : sortie de la dimension spawn vers un point aleatoire de l'overworld.
- *   /randomtp seul : n'importe quel joueur. /randomtp <joueur> : OP uniquement.
+ * - /randomtp [joueur] : (OP uniquement) sortie de la dimension spawn vers un point aleatoire de l'overworld.
  */
 @EventBusSubscriber(modid = NewWorldSpawn.MODID)
 public final class NwsCommands
@@ -47,6 +46,7 @@ public final class NwsCommands
                     builder.suggest("all").suggest("off").buildFuture())
                 .executes(NwsCommands::setSpawnCmd)));
         dispatcher.register(Commands.literal("randomtp")
+            .requires(src -> src.hasPermission(2)) // OP uniquement (joueur et <joueur>)
             .executes(NwsCommands::randomTpSelf)
             .then(Commands.argument("joueur", EntityArgument.player())
                 .requires(src -> src.hasPermission(2))
@@ -81,7 +81,7 @@ public final class NwsCommands
             p.fallDistance = 0.0f;
             p.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
             TeleportGuard.guard(p, level, 0.5, GameEvents.spawnY(level), 0.5, GameEvents.spawnY(level) - 0.5);
-            p.sendSystemMessage(Component.literal("§aBienvenue dans la dimension d'accueil ! §7(/randomtp pour sortir)"));
+            p.sendSystemMessage(Component.literal("§aBienvenue dans la dimension d'accueil !"));
         }
         else
         {
