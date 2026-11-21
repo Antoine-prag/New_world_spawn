@@ -6,6 +6,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.entity.item.ItemTossEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -205,16 +206,37 @@ public final class GameEvents
     }
 
     // ------------------------------------------------------------------ annulation /spawn sur interaction
+    // + VERROU GRIEF : dans la dimension spawn, un non-OP ne peut RIEN faire au monde
+    // (ni casser, ni poser, ni frapper, ni jeter) SAUF interagir avec les entites (PNJ)
+    // et manger. Les OPs (opsExempt + permission 2) gardent la main pour construire.
+
+    /** Verrou grief actif pour ce joueur (dimension spawn, hors ops exemptes) ? */
+    private static boolean lockedInSpawn(final ServerPlayer p)
+    {
+        return inSpawnDim(p) && !(SpawnConfig.OPS_EXEMPT.get() && p.hasPermissions(2));
+    }
+
+    private static void deny(final net.neoforged.bus.api.ICancellableEvent event, final ServerPlayer p, final String what)
+    {
+        event.setCanceled(true);
+        p.sendSystemMessage(Component.literal("§7Ici, vous ne pouvez qu'interagir avec les PNJ."));
+        NewWorldSpawn.LOG.info("Verrou spawn : {} bloque ({}, dim {})", p.getName().getString(), what,
+            p.level().dimension().location());
+    }
 
     /** Toute interaction avec le monde annule une TP /spawn en attente. */
     @SubscribeEvent
     public static void onRightClickBlock(final net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickBlock event)
     {
         spawnCancel(event);
+        if (event.getEntity() instanceof final ServerPlayer p && lockedInSpawn(p))
+        {
+            deny(event, p, "clic droit bloc");
+        }
     }
 
     @SubscribeEvent
-    public static void onRightClickItem(final net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickItem event)
+    public static void onRightClickItemPre(final net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickItem event)
     {
         spawnCancel(event);
     }
@@ -223,12 +245,30 @@ public final class GameEvents
     public static void onLeftClickBlock(final net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.LeftClickBlock event)
     {
         spawnCancel(event);
+        if (event.getEntity() instanceof final ServerPlayer p && lockedInSpawn(p))
+        {
+            deny(event, p, "casse bloc");
+        }
     }
 
     @SubscribeEvent
     public static void onEntityInteract(final net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.EntityInteract event)
     {
         spawnCancel(event);
+        // PERMIS : interagir avec les entites (PNJ, menus des gouvernements...)
+    }
+
+    @SubscribeEvent
+    public static void onRightClickItem(final net.neoforged.neoforge.event.entity.player.PlayerInteractEvent.RightClickItem event)
+    {
+        spawnCancel(event);
+        // PERMIS : manger (sinon impossible de se nourrir dans la dimension).
+        if (event.getEntity() instanceof final ServerPlayer p
+            && lockedInSpawn(p)
+            && !event.getItemStack().has(net.minecraft.core.component.DataComponents.FOOD))
+        {
+            deny(event, p, "clic droit item");
+        }
     }
 
     @SubscribeEvent
@@ -237,6 +277,23 @@ public final class GameEvents
         if (event.getEntity() instanceof final ServerPlayer p)
         {
             SpawnTeleports.cancelIfPending(p, "interaction");
+            if (lockedInSpawn(p) && !(SpawnConfig.NO_PVP.get()
+                && event.getTarget() instanceof ServerPlayer))
+            {
+                deny(event, p, "frapper entite");
+            }
+        }
+    }
+
+    /** Pas de drop d'items dans la dimension spawn (anti-grief / anti-perte). */
+    @SubscribeEvent
+    public static void onItemToss(final net.neoforged.neoforge.event.entity.item.ItemTossEvent event)
+    {
+        if (event.getPlayer() instanceof final ServerPlayer p && lockedInSpawn(p))
+        {
+            event.setCanceled(true);
+            p.sendSystemMessage(Component.literal("§7Impossible de jeter des objets ici."));
+            NewWorldSpawn.LOG.info("Verrou spawn : {} bloque (toss)", p.getName().getString());
         }
     }
 
