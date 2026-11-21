@@ -19,6 +19,7 @@ public final class SpawnConfig
     public static final ModConfigSpec.DoubleValue WATER_TRAVERSAL_RATE;
     public static final ModConfigSpec.IntValue RANDOM_TP_RANGE;
     public static final ModConfigSpec.BooleanValue SPAWN_ON_JOIN;
+    public static final ModConfigSpec.BooleanValue SPAWN_ON_JOIN_NEW_PLAYERS_ONLY;
     public static final ModConfigSpec.IntValue PRELOAD_RADIUS_CHUNKS;
     public static final ModConfigSpec.IntValue PRELOAD_CHUNKS_PER_TICK;
 
@@ -33,6 +34,11 @@ public final class SpawnConfig
         SPAWN_ON_JOIN = BUILDER
             .comment("Tous les joueurs qui se connectent arrivent dans la dimension spawn (accueil, NE BYPASSE PAS les lits au respawn).")
             .define("spawnOnJoin", false);
+        SPAWN_ON_JOIN_NEW_PLAYERS_ONLY = BUILDER
+            .comment("Avec spawnOnJoin : uniquement les NOUVEAUX joueurs (premiere connexion, aucun playerdata)"
+                + " arrivent dans la dimension spawn. Les joueurs qui se deconnectent/reconnectent retournent"
+                + " exactement ou ils etaient (aucune TP automatique au spawn).")
+            .define("spawnOnJoinNewPlayersOnly", true);
         BORDER_RADIUS_CHUNKS = BUILDER
             .comment("Rayon de la dimension spawn, en chunks (bordure carree centree en 0,0).")
             .defineInRange("borderRadiusChunks", 20, 1, 512);

@@ -349,6 +349,12 @@ public final class GameEvents
 
     // ------------------------------------------------------------------ /setspawn all : accueil des nouveaux arrivants
 
+    /**
+     * /setspawn all : accueil des NOUVEAUx joueurs uniquement.
+     * Quelqu'un qui se deconnecte et se reconnecte doit retrouver exactement sa position :
+     * AUCUNE TP automatique au spawn (demande exprès). On ne TP que si le joueur n'a
+     * AUCUN playerdata (premiere connexion de sa vie) — ou si l'option est desactivee.
+     */
     @SubscribeEvent
     public static void onLogin(final PlayerEvent.PlayerLoggedInEvent event)
     {
@@ -369,12 +375,36 @@ public final class GameEvents
         {
             return;
         }
+        if (SpawnConfig.SPAWN_ON_JOIN_NEW_PLAYERS_ONLY.get() && !isNewPlayer(p))
+        {
+            // joueur existant qui se reconnecte : il reste ou il etait, aucune TP
+            dev.prag.newworldspawn.log.NwsLog.info("Reconnexion de {} : joueur existant, PAS de TP au spawn (nouveaux joueurs uniquement).",
+                p.getName().getString());
+            return;
+        }
         // TP DIFFEREE (10 ticks) : teleporter directement DANS PlayerLoggedInEvent ne colle pas
         // fiablement (init client + ImmPtl). On passe par le meme chemin sur que /spawn
         // (generation du chunk destination + garde anti-chute), sans compte a rebours.
         SpawnTeleports.scheduleLogin(p, level);
-        NewWorldSpawn.LOG.info("Accueil : {} sera teleporte dans la dimension spawn (setspawn all)",
-            p.getName().getString());
+        NewWorldSpawn.LOG.info("Accueil : {} sera teleporte dans la dimension spawn ({}).",
+            p.getName().getString(), isNewPlayer(p) ? "nouveau joueur" : "setspawn all");
+    }
+
+    /** @return true si le joueur n'a AUCUN fichier playerdata (premiere connexion, jamais joue). */
+    private static boolean isNewPlayer(final ServerPlayer p)
+    {
+        try
+        {
+            final java.nio.file.Path data = p.getServer().getWorldPath(
+                new net.minecraft.world.level.storage.LevelResource("playerdata"))
+                .resolve(p.getUUID() + ".dat");
+            return java.nio.file.Files.notExists(data);
+        }
+        catch (final Throwable t)
+        {
+            dev.prag.newworldspawn.log.NwsLog.info("Test nouveau joueur impossible ({}), on considere le joueur comme existant.", t.toString());
+            return false; // en cas de doute : ne PAS teleporter (le moins intrusif)
+        }
     }
 
     // ------------------------------------------------------------------ pas de PvP
