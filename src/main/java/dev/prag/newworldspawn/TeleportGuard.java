@@ -28,6 +28,9 @@ public final class TeleportGuard
 
     private static final Map<UUID, Guard> GUARDS = new ConcurrentHashMap<>();
 
+    /** dernier message envoye au joueur (throttle : 1 par seconde, la re-TP reste chaque tick). */
+    private static final Map<UUID, Long> LAST_MSG = new ConcurrentHashMap<>();
+
     /** Duree par defaut de la garde (ticks) — largement assez pour l'arrivee des chunks. */
     public static final int DEFAULT_TICKS = 100;
 
@@ -47,6 +50,7 @@ public final class TeleportGuard
     /** @return true si une garde etait active (supprimee). */
     public static boolean cancel(final UUID uuid)
     {
+        LAST_MSG.remove(uuid);
         return GUARDS.remove(uuid) != null;
     }
 
@@ -75,7 +79,9 @@ public final class TeleportGuard
             {
                 continue; // sorti de la dimension entre-temps : la garde grimpe au timeout
             }
-            if (p.getY() < g.floorY())
+            // seuil 1.5 blocs : la garde vise la CHUTE a travers chunk (rapide, grande distance),
+            // pas les mini-variations de position en mergant/flottant a la surface de l'eau.
+            if (p.getY() < g.floorY() - 1.5)
             {
                 // chute a travers un chunk pas encore arrive client-side : on remet le joueur en place
                 final ServerLevel lvl = (ServerLevel) p.level();
@@ -83,10 +89,15 @@ public final class TeleportGuard
                 p.setDeltaMovement(Vec3.ZERO);
                 p.fallDistance = 0.0f;
                 p.hurtMarked = true;
-                p.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                    "§7Chunk en cours de chargement — stabilisation au spawn..."));
-                NwsLog.info("Garde anti-chute : {} ramene a x{} y{} z{} (chute a travers chunk non recu)",
-                    p.getName().getString(), (int) g.x(), (int) g.y(), (int) g.z());
+                final Long last = LAST_MSG.get(e.getKey());
+                if (last == null || now - last >= 20L)
+                {
+                    LAST_MSG.put(e.getKey(), (long) now);
+                    p.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                        "§7Chunk en cours de chargement — stabilisation au spawn..."));
+                    NwsLog.info("Garde anti-chute : {} ramene a x{} y{} z{} (chute a travers chunk non recu)",
+                        p.getName().getString(), (int) g.x(), (int) g.y(), (int) g.z());
+                }
             }
         }
     }
