@@ -47,11 +47,18 @@ public final class SpawnTeleports
      */
     public static void scheduleLogin(final ServerPlayer player, final ServerLevel level)
     {
-        final double x = 0.5, z = 0.5;
-        final double y = GameEvents.spawnY(level);
-        PENDING.put(player.getUUID(), new Pending(level, x, y, z, player.getYRot(), player.getXRot(),
+        // Destination : le spot EXACT enregistre par /setspawn all|here (ex : dans le bateau),
+        // sinon fallback ancien (0.5, spawnY, 0.5). AUCUN calcul de heightmap si un spot existe.
+        final SpawnState st = SpawnState.get(player.getServer());
+        final double x = st.destX(level);
+        final double y = st.destY(level);
+        final double z = st.destZ(level);
+        final float yaw = st.destYaw(player.getYRot());
+        final float pitch = st.destPitch(player.getXRot());
+        PENDING.put(player.getUUID(), new Pending(level, x, y, z, yaw, pitch,
             x, y, z, player.getServer().getTickCount() + 10, false));
-        dev.prag.newworldspawn.log.NwsLog.info("TP de login planifiee pour {} (setspawn all, 10 ticks)", player.getName().getString());
+        dev.prag.newworldspawn.log.NwsLog.info("TP de login planifiee pour {} (setspawn all, 10 ticks) vers x={} y={} z={}",
+            player.getName().getString(), x, y, z);
     }
 
     /** @return true si une TP en attente a ete annulee (interaction). */

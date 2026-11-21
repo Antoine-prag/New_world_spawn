@@ -9,6 +9,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
@@ -21,7 +22,8 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 /**
  * Commandes :
  * - /spawn : teleporte dans la dimension d'accueil (delai 5 s, annule si interaction).
- * - /setspawn all|off : (OP) tous les joueurs qui se connectent arrivent dans la dimension spawn.
+ * - /setspawn all|here|off : (OP) tous les joueurs qui se connectent arrivent dans la dimension spawn ;
+ *   all|here enregistrent AUSSI la position exacte de l'op comme point d'arrivee des TP.
  *   Ne change JAMAIS le respawn/lit : uniquement le point d'arrivee a la connexion.
  * - /randomtp [joueur] : (OP uniquement) sortie de la dimension spawn vers un point aleatoire de l'overworld.
  */
@@ -43,7 +45,7 @@ public final class NwsCommands
             .requires(src -> src.hasPermission(2))
             .then(Commands.argument("mode", StringArgumentType.word())
                 .suggests((throwContext, builder) ->
-                    builder.suggest("all").suggest("off").buildFuture())
+                    builder.suggest("all").suggest("here").suggest("off").buildFuture())
                 .executes(NwsCommands::setSpawnCmd)));
         dispatcher.register(Commands.literal("randomtp")
             .requires(src -> src.hasPermission(2)) // OP uniquement (joueur et <joueur>)
@@ -51,10 +53,19 @@ public final class NwsCommands
             .then(Commands.argument("joueur", EntityArgument.player())
                 .requires(src -> src.hasPermission(2))
                 .executes(NwsCommands::randomTpPlayer)));
-        NwsLog.info("Commandes enregistrees : /spawn, /setspawn all|off, /randomtp [joueur]");
+        NwsLog.info("Commandes enregistrees : /spawn, /setspawn all|here|off, /randomtp [joueur]");
     }
 
     // ------------------------------------------------------------------ /spawn
+
+    /**
+     * Destination du hub = le spot EXACT enregistre par /setspawn all|here (l'endroit ou
+     * l'op a tape la commande, ex : dans un bateau), sinon fallback ancien (0.5, spawnY, 0.5).
+     */
+    private static SpawnState spotState(final MinecraftServer server)
+    {
+        return SpawnState.get(server);
+    }
 
     static int spawnCmd(final CommandContext<CommandSourceStack> ctx)
     {
@@ -74,51 +85,84 @@ public final class NwsCommands
             p.sendSystemMessage(Component.literal("§7Vous êtes déjà dans la dimension d'accueil."));
             return 0;
         }
+        final SpawnState st = spotState(p.getServer());
+        final double x = st.destX(level);
+        final double y = st.destY(level);
+        final double z = st.destZ(level);
+        final float yaw = st.destYaw(p.getYRot());
+        final float pitch = st.destPitch(p.getXRot());
         final int delaySec = SpawnConfig.SPAWN_DELAY_SECONDS.get();
         if (delaySec <= 0)
         {
-            p.teleportTo(level, 0.5, GameEvents.spawnY(level), 0.5, p.getYRot(), p.getXRot());
+            p.teleportTo(level, x, y, z, yaw, pitch);
             p.fallDistance = 0.0f;
             p.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
-            TeleportGuard.guard(p, level, 0.5, GameEvents.spawnY(level), 0.5, GameEvents.spawnY(level) - 0.5);
+            TeleportGuard.guard(p, level, x, y, z, y - 0.5);
             p.sendSystemMessage(Component.literal("§aBienvenue dans la dimension d'accueil !"));
         }
         else
         {
-            SpawnTeleports.schedule(p, level, 0.5, GameEvents.spawnY(level), 0.5,
-                p.getYRot(), p.getXRot(), delaySec * 20);
+            SpawnTeleports.schedule(p, level, x, y, z, yaw, pitch, delaySec * 20);
             p.sendSystemMessage(Component.literal("§7Téléportation au spawn dans §e" + delaySec
                 + "s§7 — n'interagissez pas, ne bougez pas et ne subissez pas de dégâts, sinon elle est annulée."));
         }
         return Command.SINGLE_SUCCESS;
     }
 
-    // ------------------------------------------------------------------ /setspawn all|off
+    // ------------------------------------------------------------------ /setspawn all|here|off
 
     static int setSpawnCmd(final CommandContext<CommandSourceStack> ctx)
     {
         final String mode = StringArgumentType.getString(ctx, "mode").toLowerCase();
-        final SpawnState state = SpawnState.get(ctx.getSource().getServer());
+        final MinecraftServer server = ctx.getSource().getServer();
+        final ServerPlayer self = ctx.getSource().getEntity() instanceof final ServerPlayer p ? p : null;
         switch (mode)
         {
             case "all" ->
             {
-                state.forceSpawnAll = true;
-                SpawnState.set(ctx.getSource().getServer(), true); // ecrit IMMEDIATEMENT sur disque
-                NwsLog.info("/setspawn all : tous les joueurs qui se connectent arrivent dans la dimension spawn.");
+                // /setspawn all = flag + le spot devient l'endroit EXACT ou se trouve l'op
+                // (on refait /setspawn all apres avoir (re)place le point d'accueil).
+                if (self == null || !GameEvents.inSpawnDim(self))
+                {
+                    // pas dans la dimension : on bascule juste le flag, le spot reste l'ancien
+                    SpawnState.set(server, true);
+                    NwsLog.info("/setspawn all (hors dimension, spot inchangé) : tous les joueurs qui se connectent arrivent dans la dimension spawn.");
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§aOK : tous les joueurs qui se connectent arrivent dans la dimension d'accueil.§7 "
+                            + "Position d'arrivée inchangée — mettez-vous à l'endroit voulu (dans la dimension) et tapez §e/setspawn here§7 pour la (re)définir."), false);
+                }
+                else
+                {
+                    SpawnState.setSpot(server, true, self.getX(), self.getY(), self.getZ(), self.getYRot(), self.getXRot());
+                    NwsLog.info("/setspawn all : flag + spot = position exacte de l'op ({} {} {})", self.getX(), self.getY(), self.getZ());
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§aOK : tous les joueurs qui se connectent arrivent dans la dimension d'accueil, §fà l'endroit exact où vous êtes§a."
+                            + " §7(les lits gardent le respawn en priorité après /c home)."), false);
+                }
+            }
+            case "here" ->
+            {
+                if (self == null || !GameEvents.inSpawnDim(self))
+                {
+                    ctx.getSource().sendFailure(Component.literal(
+                        "§cCommande joueur, à exécuter DANS la dimension d'accueil (à l'endroit voulu)."));
+                    return 0;
+                }
+                final boolean cur = SpawnState.get(server).forceSpawnAll;
+                SpawnState.setSpot(server, cur, self.getX(), self.getY(), self.getZ(), self.getYRot(), self.getXRot());
+                NwsLog.info("/setspawn here : spot = position exacte de l'op ({} {} {}, yaw {})", self.getX(), self.getY(), self.getZ(), self.getYRot());
                 ctx.getSource().sendSuccess(() -> Component.literal(
-                    "§aOK : tous les joueurs qui se connectent arrivent dans la dimension d'accueil."
-                        + " §7(les lits gardent le respawn de mort)."), true);
+                    "§aOK : point d'arrivée du spawn = votre position exacte (x" + String.format("%.2f", self.getX())
+                        + " y" + String.format("%.2f", self.getY()) + " z" + String.format("%.2f", self.getZ()) + ")."), false);
             }
             case "off" ->
             {
-                state.forceSpawnAll = false;
-                SpawnState.set(ctx.getSource().getServer(), false); // ecrit IMMEDIATEMENT sur disque
+                SpawnState.set(server, false); // ecrit IMMEDIATEMENT sur disque
                 NwsLog.info("/setspawn off : retour au spawn vanilla a la connexion.");
                 ctx.getSource().sendSuccess(() -> Component.literal(
                     "§aOK : spawn à la connexion = vanilla."), true);
             }
-            default -> ctx.getSource().sendFailure(Component.literal("§cUsage : /setspawn <all|off>"));
+            default -> ctx.getSource().sendFailure(Component.literal("§cUsage : /setspawn <all|here|off>"));
         }
         return Command.SINGLE_SUCCESS;
     }
