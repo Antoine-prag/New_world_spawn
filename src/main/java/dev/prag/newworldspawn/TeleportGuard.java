@@ -28,7 +28,10 @@ public final class TeleportGuard
 
     private static final Map<UUID, Guard> GUARDS = new ConcurrentHashMap<>();
 
-    /** dernier message envoye au joueur (throttle : 1 par seconde, la re-TP reste chaque tick). */
+    /** dernier re-placement du joueur (max 1 / 10 ticks — pas un TP complet chaque tick). */
+    private static final Map<UUID, Long> LAST_TP = new ConcurrentHashMap<>();
+
+    /** dernier message envoye au joueur (throttle : 1 par 2 s). */
     private static final Map<UUID, Long> LAST_MSG = new ConcurrentHashMap<>();
 
     /** Duree par defaut de la garde (ticks) — largement assez pour l'arrivee des chunks. */
@@ -50,6 +53,7 @@ public final class TeleportGuard
     /** @return true si une garde etait active (supprimee). */
     public static boolean cancel(final UUID uuid)
     {
+        LAST_TP.remove(uuid);
         LAST_MSG.remove(uuid);
         return GUARDS.remove(uuid) != null;
     }
@@ -81,16 +85,22 @@ public final class TeleportGuard
             }
             // seuil 1.5 blocs : la garde vise la CHUTE a travers chunk (rapide, grande distance),
             // pas les mini-variations de position en mergant/flottant a la surface de l'eau.
+            // Re-placement max 1 / 10 ticks, via p.connection.teleport (simple paquet de
+            // position client) : un teleportTo complet chaque tick declenche tout le pipeline
+            // de TP (hooks ImmPtl etc.) = chargement de chunks sauvage et lags enormes.
             if (p.getY() < g.floorY() - 1.5)
             {
-                // chute a travers un chunk pas encore arrive client-side : on remet le joueur en place
-                final ServerLevel lvl = (ServerLevel) p.level();
-                p.teleportTo(lvl, g.x(), g.y(), g.z(), p.getYRot(), p.getXRot());
-                p.setDeltaMovement(Vec3.ZERO);
-                p.fallDistance = 0.0f;
-                p.hurtMarked = true;
-                final Long last = LAST_MSG.get(e.getKey());
-                if (last == null || now - last >= 20L)
+                final Long lastTp = LAST_TP.get(e.getKey());
+                final Long lastMsg = LAST_MSG.get(e.getKey());
+                if (lastTp == null || now - lastTp >= 10L)
+                {
+                    LAST_TP.put(e.getKey(), (long) now);
+                    // position serveur + paquet client, SANS le pipeline de teleportation complet
+                    p.connection.teleport(g.x(), g.y(), g.z(), p.getYRot(), p.getXRot());
+                    p.setDeltaMovement(Vec3.ZERO);
+                    p.fallDistance = 0.0f;
+                }
+                if (lastMsg == null || now - lastMsg >= 40L)
                 {
                     LAST_MSG.put(e.getKey(), (long) now);
                     p.sendSystemMessage(net.minecraft.network.chat.Component.literal(
